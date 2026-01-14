@@ -1,0 +1,9 @@
+[package]
+name = "hft_log_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus-queue = "0.3"        # 如果你本地版本不同，改成你正在用的版本
+crossbeam-channel = "0.5"
+libc = "0.2"
