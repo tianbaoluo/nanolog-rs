@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::intrinsics::transmute;
+use std::mem::transmute;
 use bytemuck::{Pod, Zeroable};
 
 pub trait Arg: Display + Copy + Clone {
@@ -149,75 +149,70 @@ pub fn args2<T1: IntoArg, T2: IntoArg>(arg1: T1, arg2: T2) -> Args2::<T1::D, T2:
   }
 }
 
-pub fn decode_fmt_args2(bytes: &[u8]) {
-  let mut offset = 8;
-  let tag1 = bytes[0];
-  let tag2 = bytes[1];
-  match tag1 {
-    0 => {
-      let v = repr_off_as::<f64>(bytes, offset);
-      offset += 8;
-      println!("f64 {}", v);
-    },
-    1 => {
-      let v = repr_off_as::<u64>(bytes, offset);
-      offset += 8;
-      println!("u64 {}", v);
-    },
-    2 => {
-      let v = repr_off_as::<i64>(bytes, offset);
-      offset += 8;
-      println!("i64 {}", v);
-    },
-    len => {
-      let decode_fn = *repr_off_as::<u64>(bytes, offset);
-      let start = offset + 8;
-      offset += len as usize;
-      let snap_bytes = SnapBytes {
-        decode_fn,
-        bytes: &bytes[start..offset],
-      };
-      println!("user-pod: {}", snap_bytes);
-    },
+pub enum DecodeResult<'a> {
+  F64(f64),
+  U64(u64),
+  I64(i64),
+  Snap(SnapBytes<'a>),
+}
+
+impl <'a> Display for DecodeResult<'a> {
+  #[inline]
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    match self {
+      DecodeResult::F64(v) => v.fmt(f),
+      DecodeResult::U64(v) => v.fmt(f),
+      DecodeResult::I64(v) => v.fmt(f),
+      DecodeResult::Snap(s) => s.fmt(f),
+    }
   }
-  match tag2 {
+}
+
+pub fn decode(tag: u8, bytes: &[u8], offset: usize) -> (DecodeResult, usize) {
+  match tag {
     0 => {
       let v = repr_off_as::<f64>(bytes, offset);
-      offset += 8;
-      println!("f64 {}", v);
+      (DecodeResult::F64(*v), offset + 8)
     },
     1 => {
       let v = repr_off_as::<u64>(bytes, offset);
-      offset += 8;
-      println!("u64 {}", v);
+      (DecodeResult::U64(*v), offset + 8)
     },
     2 => {
       let v = repr_off_as::<i64>(bytes, offset);
-      offset += 8;
-      println!("i64 {}", v);
+      (DecodeResult::I64(*v), offset + 8)
     },
     len => {
       let decode_fn = *repr_off_as::<u64>(bytes, offset);
       let start = offset + 8;
-      offset += len as usize;
+      let new_offset = offset + len as usize;
       let snap_bytes = SnapBytes {
         decode_fn,
-        bytes: &bytes[start..offset],
+        bytes: &bytes[start..new_offset],
       };
-      println!("user-pod: {}", snap_bytes);
+      (DecodeResult::Snap(snap_bytes), new_offset)
     },
   }
 }
 
+pub fn decode_fmt_args2(bytes: &[u8]) {
+  let tag1 = bytes[0];
+  let tag2 = bytes[1];
+  let (arg1, offset) = decode(tag1, bytes, 8);
+  let (arg2, _) = decode(tag2, bytes, offset);
+  println!("arg1 {} arg2 {}", arg1, arg2);
+}
+
 type DecodeFn = fn(&[u8], &mut fmt::Formatter<'_>) -> fmt::Result;
 
-struct SnapBytes<'a> {
+pub(crate) struct SnapBytes<'a> {
   decode_fn: u64,
   bytes: &'a [u8],
 }
 
 impl <'a> Display for SnapBytes<'a> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  #[inline]
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     let decode_fn = unsafe { transmute::<_, DecodeFn>(self.decode_fn) };
     decode_fn(self.bytes, f)
   }
