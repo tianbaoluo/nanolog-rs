@@ -6,7 +6,7 @@ const MAX_PAYLOAD_LEN: usize = 256;
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn rdtsc() -> u64 {
+pub(crate) fn rdtsc() -> u64 {
   unsafe { core::arch::x86_64::_rdtsc() as u64 }
 }
 
