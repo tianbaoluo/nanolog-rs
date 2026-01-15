@@ -1056,6 +1056,12 @@ struct BigObj {
 fn main() {
     let logger = init_logger(1024);
 
+    println!("size-of-arg={}", size_of::<Arg>());
+
+    if true {
+        return;
+    }
+
     let x: i64 = 123;
     let s = "a-very-very-very-very-very-very-very-very-long-string-should-trunc";
     let big = BigObj { a: 42, b: [7u8; 128] };

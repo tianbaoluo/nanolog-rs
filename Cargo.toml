@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 nexus-queue = "0.3"        # 如果你本地版本不同，改成你正在用的版本
 crossbeam-channel = "0.5"
+bytemuck = { version = "1.24", features = ["derive"] }
+crossbeam-utils = "0.8"
 libc = "0.2"
