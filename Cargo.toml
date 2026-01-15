@@ -6,8 +6,16 @@ edition = "2021"
 [dependencies]
 nexus-queue = "0.3"        # 如果你本地版本不同，改成你正在用的版本
 crossbeam-channel = "0.5"
+crossbeam-utils = "0.8"
 bytemuck = { version = "1.24", features = ["derive"] }
 libc = "0.2"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+debug-assertions = false
+opt-level = 1
+codegen-units = 256
 
 [dev-dependencies]
 minstant = "0.1"

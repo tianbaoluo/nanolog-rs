@@ -1,0 +1,261 @@
+//! Single-producer single-consumer queue using cached indices.
+//!
+//! This is the default implementation.
+//!
+//! # Design
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │ Shared:                                                     │
+//! │   tail: CachePadded<AtomicUsize>   ← Producer writes        │
+//! │   head: CachePadded<AtomicUsize>   ← Consumer writes        │
+//! │   buffer: *mut T                                            │
+//! └─────────────────────────────────────────────────────────────┘
+//!
+//! ┌─────────────────────┐     ┌─────────────────────┐
+//! │ Producer:           │     │ Consumer:           │
+//! │   local_tail        │     │   local_head        │
+//! │   cached_head       │     │   cached_tail       │
+//! └─────────────────────┘     └─────────────────────┘
+//! ```
+//!
+//! Producer and consumer each maintain a cached copy of the other's index,
+//! only refreshing from the atomic when the cache indicates the queue is
+//! full (producer) or empty (consumer). Head and tail are on separate cache
+//! lines to avoid false sharing.
+//!
+//! # Performance Characteristics
+//!
+//! This implementation has different performance characteristics than the
+//! [`slot`](super::slot) implementation. The key difference is cache line
+//! ownership:
+//!
+//! - **index**: Producer and consumer write to separate cache lines (head/tail)
+//! - **slot**: Producer and consumer write to the same cache line (the slot's lap counter)
+//!
+//! Which performs better depends on your hardware topology, particularly NUMA
+//! configuration and cache hierarchy. **Benchmark both on your target hardware.**
+//!
+//! Enable the alternative with:
+//!
+//! ```toml
+//! [dependencies]
+//! nexus-queue = { version = "...", features = ["slot-based"] }
+//! ```
+//!
+//! # Example
+//!
+//! ```
+//! use nexus_queue::spsc;
+//!
+//! let (mut tx, mut rx) = spsc::ring_buffer::<u64>(1024);
+//!
+//! tx.push(42).unwrap();
+//! assert_eq!(rx.pop(), Some(42));
+//! ```
+
+use std::fmt;
+use std::mem::ManuallyDrop;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crossbeam_utils::CachePadded;
+
+/// Creates a bounded SPSC ring buffer with the given capacity.
+///
+/// Capacity is rounded up to the next power of two.
+///
+/// # Panics
+///
+/// Panics if `capacity` is zero.
+pub fn ring_buffer<T>(capacity: usize) -> (Producer<T>, Consumer<T>) {
+  assert!(capacity > 0, "capacity must be non-zero");
+
+  let capacity = capacity.next_power_of_two();
+  let mask = capacity - 1;
+
+  let mut slots = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+  let buffer = slots.as_mut_ptr();
+
+  let shared = Arc::new(Shared {
+    tail: CachePadded::new(AtomicUsize::new(0)),
+    head: CachePadded::new(AtomicUsize::new(0)),
+    buffer,
+    mask,
+  });
+
+  (
+    Producer {
+      local_tail: 0,
+      cached_head: 0,
+      buffer,
+      mask,
+      shared: Arc::clone(&shared),
+    },
+    Consumer {
+      local_head: 0,
+      cached_tail: 0,
+      buffer,
+      mask,
+      shared,
+    },
+  )
+}
+
+#[repr(C)]
+struct Shared<T> {
+  tail: CachePadded<AtomicUsize>,
+  head: CachePadded<AtomicUsize>,
+  buffer: *mut T,
+  mask: usize,
+}
+
+unsafe impl<T: Send> Send for Shared<T> {}
+unsafe impl<T: Send> Sync for Shared<T> {}
+
+impl<T> Drop for Shared<T> {
+  fn drop(&mut self) {
+    let head = self.head.load(Ordering::Relaxed);
+    let tail = self.tail.load(Ordering::Relaxed);
+
+    let mut i = head;
+    while i != tail {
+      unsafe { self.buffer.add(i & self.mask).drop_in_place() };
+      i = i.wrapping_add(1);
+    }
+
+    unsafe {
+      let capacity = self.mask + 1;
+      let _ = Vec::from_raw_parts(self.buffer, 0, capacity);
+    }
+  }
+}
+
+/// The producer endpoint of an SPSC queue.
+///
+/// This endpoint can only push values into the queue.
+#[repr(C)]
+pub struct Producer<T> {
+  local_tail: usize,
+  cached_head: usize,
+  buffer: *mut T,
+  mask: usize,
+  shared: Arc<Shared<T>>,
+}
+
+unsafe impl<T: Send> Send for Producer<T> {}
+
+impl<T> Producer<T> {
+  /// Pushes a value into the queue.
+  ///
+  /// Returns `Err(Full(value))` if the queue is full, returning ownership
+  /// of the value to the caller.
+  #[inline]
+  pub fn push_write<F: FnMut(&mut T)>(&mut self, mut f: F) -> Result<(), ()> {
+    let tail = self.local_tail;
+
+    if tail.wrapping_sub(self.cached_head) > self.mask {
+      self.cached_head = self.shared.head.load(Ordering::Relaxed);
+
+      std::sync::atomic::fence(Ordering::Acquire);
+      if tail.wrapping_sub(self.cached_head) > self.mask {
+        return Err(());
+      }
+    }
+
+    // unsafe { self.buffer.add(tail & self.mask).write(value) };
+    unsafe {
+      let data_ptr = self.buffer.add(tail & self.mask);
+      f(&mut *data_ptr);
+    }
+    let new_tail = tail.wrapping_add(1);
+    std::sync::atomic::fence(Ordering::Release);
+
+    self.shared.tail.store(new_tail, Ordering::Relaxed);
+    self.local_tail = new_tail;
+
+    Ok(())
+  }
+
+  /// Returns the capacity of the queue.
+  #[inline]
+  pub fn capacity(&self) -> usize {
+    self.mask + 1
+  }
+
+  /// Returns `true` if the consumer has been dropped.
+  #[inline]
+  pub fn is_disconnected(&self) -> bool {
+    Arc::strong_count(&self.shared) == 1
+  }
+}
+
+impl<T> fmt::Debug for Producer<T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Producer")
+      .field("capacity", &self.capacity())
+      .finish_non_exhaustive()
+  }
+}
+
+/// The consumer endpoint of an SPSC queue.
+///
+/// This endpoint can only pop values from the queue.
+#[repr(C)]
+pub struct Consumer<T> {
+  local_head: usize,
+  cached_tail: usize,
+  buffer: *mut T,
+  mask: usize,
+  shared: Arc<Shared<T>>,
+}
+
+unsafe impl<T: Send> Send for Consumer<T> {}
+
+impl<T> Consumer<T> {
+  /// Pops a value from the queue.
+  ///
+  /// Returns `None` if the queue is empty.
+  #[inline]
+  pub fn pop(&mut self) -> Option<T> {
+    let head = self.local_head;
+
+    if head == self.cached_tail {
+      self.cached_tail = self.shared.tail.load(Ordering::Relaxed);
+      std::sync::atomic::fence(Ordering::Acquire);
+
+      if head == self.cached_tail {
+        return None;
+      }
+    }
+
+    let value = unsafe { self.buffer.add(head & self.mask).read() };
+    let new_head = head.wrapping_add(1);
+    std::sync::atomic::fence(Ordering::Release);
+
+    self.shared.head.store(new_head, Ordering::Relaxed);
+    self.local_head = new_head;
+
+    Some(value)
+  }
+
+  /// Returns the capacity of the queue.
+  #[inline]
+  pub fn capacity(&self) -> usize {
+    self.mask + 1
+  }
+
+  /// Returns `true` if the producer has been dropped.
+  #[inline]
+  pub fn is_disconnected(&self) -> bool {
+    Arc::strong_count(&self.shared) == 1
+  }
+}
+
+impl<T> fmt::Debug for Consumer<T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Consumer")
+      .field("capacity", &self.capacity())
+      .finish_non_exhaustive()
+  }
+}

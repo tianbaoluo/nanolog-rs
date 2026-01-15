@@ -41,9 +41,9 @@ type LogFn = fn(&mut dyn Write, u32, bytes: &[u8]) -> io::Result<()>;
 #[derive(Copy, Clone)]
 pub struct LogEntry {
   pub tsc: u64,
-  pub level: u8,
-  pub len: u16,
-  pub _pad: [u8; 5],
+  pub level: u64,
+  // pub len: u16,
+  // pub _pad: [u8; 7],
   pub func: LogFn,
   pub data: [u8; MAX_PAYLOAD_LEN],
 }
@@ -53,19 +53,41 @@ impl LogEntry {
   pub fn from_args<A: Copy>(level: Level, func: LogFn, args: &A) -> Self {
     let sz = size_of::<A>();
     debug_assert!(sz <= MAX_PAYLOAD_LEN);
-    let mut e = LogEntry {
-      tsc: rdtsc(),
-      level: level as u8,
-      _pad: [0; 5],
+    let mut log_entry = LogEntry {
+      tsc: 0, //rdtsc(),
+      level: level as u8 as u64,
+      // len: sz as u16,
+      // _pad: [0; 7],
       func,
-      len: sz as u16,
       data: [0u8; MAX_PAYLOAD_LEN],
     };
 
     unsafe {
-      ptr::copy_nonoverlapping(args as *const A as *const u8, e.data.as_mut_ptr(), sz);
+      ptr::copy_nonoverlapping(args as *const A as *const u8, log_entry.data.as_mut_ptr(), sz);
     }
-    e
+    log_entry
+  }
+
+  #[inline(always)]
+  pub fn mut_from_args<A: Copy>(&mut self, level: Level, func: LogFn, args: &A) {
+    let sz = size_of::<A>();
+    debug_assert!(sz <= MAX_PAYLOAD_LEN);
+    self.tsc = 0; // rdtsc();
+    self.level = level as u8 as u64;
+    self.func = func;
+    // let mut log_entry = LogEntry {
+    //   tsc: 0, //rdtsc(),
+    //   level: level as u8 as u64,
+    //   // len: sz as u16,
+    //   _pad: [0; 7],
+    //   func,
+    //   data: [0u8; MAX_PAYLOAD_LEN],
+    // };
+
+    unsafe {
+      ptr::copy_nonoverlapping(args as *const A as *const u8, self.data.as_mut_ptr(), sz);
+    }
+    // log_entry
   }
 }
 
@@ -140,8 +162,9 @@ macro_rules! __emit2 {
         write!(out, $fmt, arg1, arg2)
       }
       let args2 = $crate::args2::args2($a0, $a1);
-      let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
-      $logger.push(e);
+      $logger.push_write(|log_entry| log_entry.mut_from_args($lvl, __hft_shim, &args2));
+      // let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
+      // $logger.push(e);
     }};
 }
 

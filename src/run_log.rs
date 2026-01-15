@@ -16,18 +16,20 @@ struct RegMsg {
 }
 
 pub struct LoggerHandle {
+  prod: spsc_queue::Producer<LogEntry>,
   reg_tx: Sender<RegMsg>,
   capacity: usize,
 }
 
-impl Clone for LoggerHandle {
-  fn clone(&self) -> Self {
-    Self {
-      reg_tx: self.reg_tx.clone(),
-      capacity: self.capacity,
-    }
-  }
-}
+// impl Clone for LoggerHandle {
+//   fn clone(&self) -> Self {
+//     Self {
+//       prod: self.prod,
+//       reg_tx: self.reg_tx.clone(),
+//       capacity: self.capacity,
+//     }
+//   }
+// }
 
 struct TlsProd {
   inited: Cell<bool>,
@@ -40,42 +42,64 @@ unsafe impl Sync for TlsProd {}
 static NEXT_TID: AtomicU32 = AtomicU32::new(1);
 
 impl TlsProd {
-  #[inline(always)]
-  fn get_mut(&self, logger: &LoggerHandle) -> &mut spsc_queue::Producer<LogEntry> {
-    if !self.inited.get() {
-      let (prod, cons) = spsc_queue::spsc_queue::<LogEntry>(logger.capacity);
-      let tid = NEXT_TID.fetch_add(1, Ordering::Relaxed); //get_tid();
-      self.tid.set(tid);
+  // #[inline(always)]
+  // fn get_mut(&self, logger: &LoggerHandle) -> &mut spsc_queue::Producer<LogEntry> {
+  //   if !self.inited.get() {
+  //     let (prod, cons) = spsc_queue::spsc_queue::<LogEntry>(logger.capacity);
+  //     let tid = NEXT_TID.fetch_add(1, Ordering::Relaxed); //get_tid();
+  //     self.tid.set(tid);
+  //
+  //     let _ = logger.reg_tx.send(RegMsg { cons, tid });
+  //
+  //     unsafe { (*self.prod.get()).write(prod) };
+  //     self.inited.set(true);
+  //   }
+  //   unsafe { (*self.prod.get()).assume_init_mut() }
+  // }
 
-      let _ = logger.reg_tx.send(RegMsg { cons, tid });
-
-      unsafe { (*self.prod.get()).write(prod) };
-      self.inited.set(true);
-    }
-    unsafe { (*self.prod.get()).assume_init_mut() }
-  }
+  // #[inline(always)]
+  // fn init(&self, logger: &mut LoggerHandle) {
+  //   if !self.inited.get() {
+  //     let (prod, cons) = spsc_queue::spsc_queue::<LogEntry>(logger.capacity);
+  //     let tid = NEXT_TID.fetch_add(1, Ordering::Relaxed); //get_tid();
+  //     self.tid.set(tid);
+  //
+  //     let _ = logger.reg_tx.send(RegMsg { cons, tid });
+  //
+  //     unsafe { (*self.prod.get()).write(prod) };
+  //     logger.prod = self.prod.get().as_mut_ptr();
+  //     self.inited.set(true);
+  //   }
+  //   // unsafe { (*self.prod.get()).assume_init_mut() }
+  // }
 }
 
-thread_local! {
-    static TLS_PROD: TlsProd = TlsProd {
-        inited: Cell::new(false),
-        prod: UnsafeCell::new(MaybeUninit::uninit()),
-        tid: Cell::new(0),
-    };
-}
+// thread_local! {
+//     static TLS_PROD: TlsProd = TlsProd {
+//         inited: Cell::new(false),
+//         prod: UnsafeCell::new(MaybeUninit::uninit()),
+//         tid: Cell::new(0),
+//     };
+// }
 
 impl LoggerHandle {
+  // #[inline(always)]
+  // pub fn push(&mut self, e: LogEntry) {
+  //   let _ = self.prod.push(e); // 满了就丢；你可以加 dropped 计数
+  //   // TLS_PROD.with(|tls| {
+  //   //   let p = tls.get_mut(self);
+  //   //   let _ = p.push(e); // 满了就丢；你可以加 dropped 计数
+  //   // });
+  // }
+
   #[inline(always)]
-  pub fn push(&self, e: LogEntry) {
-    TLS_PROD.with(|tls| {
-      let p = tls.get_mut(self);
-      let _ = p.push(e); // 满了就丢；你可以加 dropped 计数
-    });
+  pub fn push_write<F: FnMut(&mut LogEntry)>(&mut self, f: F) {
+    let _ = self.prod.push_write(f); // 满了就丢；你可以加 dropped 计数
   }
 }
 
 #[inline(always)]
-fn level_str(l: u8) -> &'static str {
+fn level_str(l: u64) -> &'static str {
   match l {
     0 => "trace",
     1 => "debug",
@@ -221,18 +245,17 @@ impl LoggerThread {
       }
 
       let mut out = io::stdout();
-      // let mut out = io::BufWriter::new(stdout.lock());
       for qs in qs.iter_mut() {
         let tid = qs.tid;
         while let Some(log_entry) = qs.cons.pop() {
           self.write_header(&mut out, &log_entry)?;
-          // let len = e.len as usize;
+          // // let len = e.len as usize;
           (log_entry.func)(&mut out, tid, &log_entry.data)?;
           out.write_all(b"\n")?;
         }
       }
       out.flush()?;
-      drop(out);
+      // drop(out);
       // drop(stdout);
 
       // println!("park");
@@ -283,7 +306,11 @@ pub fn init_logger(capacity: usize) -> LoggerHandle {
     }
   });
 
-  LoggerHandle { reg_tx, capacity }
+  let (prod, cons) = spsc_queue::spsc_queue::<LogEntry>(capacity);
+  let tid = NEXT_TID.fetch_add(1, Ordering::Relaxed); //get_tid();
+  let _ = reg_tx.send(RegMsg { cons, tid });
+
+  LoggerHandle { prod, reg_tx, capacity }
 }
 
 // =============================
