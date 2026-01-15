@@ -125,16 +125,17 @@ impl LoggerThread {
       head: None,
       tid: msg.tid,
     };
-    let qid = self.qs.len();
-    if let Some(e) = st.cons.pop() {
-      let t = e.tsc;
-      st.head = Some(e);
-      self.qs.push(st);
-      self.heap.push(Reverse((t, qid)));
-    } else {
-      self.qs.push(st);
-      self.empty.push(qid);
-    }
+    self.qs.push(st);
+    // let qid = self.qs.len();
+    // if let Some(e) = st.cons.pop() {
+    //   let t = e.tsc;
+    //   st.head = Some(e);
+    //   self.qs.push(st);
+    //   self.heap.push(Reverse((t, qid)));
+    // } else {
+    //   self.qs.push(st);
+    //   self.empty.push(qid);
+    // }
   }
 
   #[inline(always)]
@@ -206,31 +207,66 @@ impl LoggerThread {
   }
 
   fn run(mut self) -> io::Result<()> {
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
-
+    let mut qs = Vec::with_capacity(64);
     loop {
       while let Ok(msg) = self.reg_rx.try_recv() {
-        self.add_consumer(msg);
+        // self.add_consumer(msg);
+        let mut cons = msg.cons;
+        let mut st = QState {
+          cons,
+          head: None,
+          tid: msg.tid,
+        };
+        qs.push(st);
       }
 
-      // 小预算扫描空队列（兜底）
-      self.scan_empty_budget(4);
-
-      if let Some(Reverse((_t, qid))) = self.heap.pop() {
-        let e = self.qs[qid].head.take().unwrap();
-        let tid = self.qs[qid].tid;
-
-        self.write_header(&mut out, &e)?;
-        // let len = e.len as usize;
-        (e.func)(&mut out, tid, &e.data);
-        out.write_all(b"\n")?;
-
-        self.refill_head(qid);
-      } else {
-        std::thread::yield_now();
+      let mut out = io::stdout();
+      // let mut out = io::BufWriter::new(stdout.lock());
+      for qs in qs.iter_mut() {
+        let tid = qs.tid;
+        while let Some(log_entry) = qs.cons.pop() {
+          self.write_header(&mut out, &log_entry)?;
+          // let len = e.len as usize;
+          (log_entry.func)(&mut out, tid, &log_entry.data)?;
+          out.write_all(b"\n")?;
+        }
       }
+      out.flush()?;
+      drop(out);
+      // drop(stdout);
+
+      // println!("park");
+      std::thread::park_timeout(Duration::from_micros(100));
+      // println!("unpark");
+      // break;
     }
+    println!("Done");
+
+    // let stdout = io::stdout();
+    // let mut out = io::BufWriter::new(stdout.lock());
+    //
+    // loop {
+    //   while let Ok(msg) = self.reg_rx.try_recv() {
+    //     self.add_consumer(msg);
+    //   }
+    //
+    //   // 小预算扫描空队列（兜底）
+    //   self.scan_empty_budget(4);
+    //
+    //   if let Some(Reverse((_t, qid))) = self.heap.pop() {
+    //     let e = self.qs[qid].head.take().unwrap();
+    //     let tid = self.qs[qid].tid;
+    //
+    //     self.write_header(&mut out, &e)?;
+    //     // let len = e.len as usize;
+    //     (e.func)(&mut out, tid, &e.data);
+    //     out.write_all(b"\n")?;
+    //
+    //     self.refill_head(qid);
+    //   } else {
+    //     std::thread::yield_now();
+    //   }
+    // }
   }
 }
 
@@ -242,7 +278,9 @@ pub fn init_logger(capacity: usize) -> LoggerHandle {
 
   std::thread::spawn(move || {
     let lt = LoggerThread::new(reg_rx);
-    let _ = lt.run();
+    if let Err(e) = lt.run() {
+      println!("Run log-backend error: {:?}", e);
+    }
   });
 
   LoggerHandle { reg_tx, capacity }
