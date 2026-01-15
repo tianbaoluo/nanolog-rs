@@ -176,7 +176,7 @@ impl LoggerThread {
   }
 
   #[inline(always)]
-  fn write_header(&mut self, out: &mut dyn Write, e: &LogEntry, tid: u32) -> io::Result<()> {
+  fn write_header(&mut self, out: &mut dyn Write, e: &LogEntry) -> io::Result<()> {
     // tsc -> epoch_ns
     let epoch_ns = self.clock.tsc_to_epoch_ns(e.tsc);
     let sec = epoch_ns / 1_000_000_000;
@@ -202,17 +202,6 @@ impl LoggerThread {
     out.write_all(b" ")?;
     out.write_all(level_str(e.level).as_bytes())?;
     out.write_all(b" ")?;
-    let src_loc = e.src_loc;
-    out.write_all(src_loc.module_path.as_bytes())?;
-    out.write_all(b"::")?;
-    out.write_all(src_loc.file_name().as_bytes())?;
-    write!(out, "#{} {}", src_loc.line, tid)?;
-    // out.write_all(e.site.as_bytes())?;
-    // out.write_all(b" ")?;
-    // tid
-    // 写数字用 itoa 更快，但这里先用 write!（logger 线程，且每条一次）
-    // write!(out, "{}", tid)?;
-    out.write_all(b"] ")?;
     Ok(())
   }
 
@@ -232,9 +221,9 @@ impl LoggerThread {
         let e = self.qs[qid].head.take().unwrap();
         let tid = self.qs[qid].tid;
 
-        self.write_header(&mut out, &e, tid)?;
+        self.write_header(&mut out, &e)?;
         // let len = e.len as usize;
-        (e.func)(&mut out, &e.data);
+        (e.func)(&mut out, tid, &e.data);
         out.write_all(b"\n")?;
 
         self.refill_head(qid);

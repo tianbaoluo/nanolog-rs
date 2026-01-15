@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::{mem, ptr};
+use std::{io, mem, ptr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_PAYLOAD_LEN: usize = 256;
@@ -35,7 +35,7 @@ pub fn enabled(_lvl: Level) -> bool {
   true
 }
 
-type LogFn = fn(&mut dyn Write, bytes: &[u8]);
+type LogFn = fn(&mut dyn Write, u32, bytes: &[u8]) -> io::Result<()>;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -44,21 +44,19 @@ pub struct LogEntry {
   pub level: u8,
   pub len: u16,
   pub _pad: [u8; 5],
-  pub src_loc: SourceLocation,
   pub func: LogFn,
   pub data: [u8; MAX_PAYLOAD_LEN],
 }
 
 impl LogEntry {
   #[inline(always)]
-  pub fn from_args<A: Copy>(level: Level, src_loc: SourceLocation, func: LogFn, args: &A) -> Self {
+  pub fn from_args<A: Copy>(level: Level, func: LogFn, args: &A) -> Self {
     let sz = size_of::<A>();
     debug_assert!(sz <= MAX_PAYLOAD_LEN);
     let mut e = LogEntry {
       tsc: rdtsc(),
       level: level as u8,
       _pad: [0; 5],
-      src_loc,
       func,
       len: sz as u16,
       data: [0u8; MAX_PAYLOAD_LEN],
@@ -132,16 +130,27 @@ impl SourceLocation {
 macro_rules! __emit2 {
     ($logger:expr, $lvl:expr, $fmt:literal, $a0:expr, $a1:expr) => {{
       #[inline(never)]
-      fn __hft_shim(out: &mut dyn std::io::Write, bytes: &[u8]) {
+      fn __hft_shim(out: &mut dyn std::io::Write, tid: u32, bytes: &[u8]) -> std::io::Result<()> {
+        let src_loc = $crate::log::SourceLocation::__new(module_path!(), file!(), line!());
+        $crate::log::write_loc_tid(out, src_loc, tid)?;
         let tag1 = bytes[0];
         let tag2 = bytes[1];
         let (arg1, offset) = $crate::args2::decode(tag1, bytes, 8);
         let (arg2, _) = $crate::args2::decode(tag2, bytes, offset);
-        let _ = write!(out, $fmt, arg1, arg2);
+        write!(out, $fmt, arg1, arg2)
       }
-      let src_loc = $crate::log::SourceLocation::__new(module_path!(), file!(), line!());
       let args2 = $crate::args2::args2($a0, $a1);
-      let e = $crate::log::LogEntry::from_args($lvl, src_loc, __hft_shim, &args2);
+      let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
       $logger.push(e);
     }};
+}
+
+#[inline(always)]
+pub fn write_loc_tid(out: &mut dyn std::io::Write, src_loc: SourceLocation, tid: u32) -> io::Result<()> {
+  out.write_all(src_loc.module_path.as_bytes())?;
+  out.write_all(b"::")?;
+  out.write_all(src_loc.file_name().as_bytes())?;
+  write!(out, "#{} {}", src_loc.line, tid)?;
+  out.write_all(b"] ")?;
+  Ok(())
 }

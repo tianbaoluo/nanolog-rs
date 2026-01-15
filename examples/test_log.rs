@@ -9,16 +9,19 @@ use hft_log_demo::run_log::init_logger;
 fn main() {
   let logger = init_logger(1024);
 
-  for id in 10..100 {
+  let timer = minstant::Instant::now();
+  for id in 0..10_000 {
     let user = UserData {
       x: id,
-      a: id + 2,
-      y: id as u64 * 100,
+      a: id,
+      y: id as u64,
     };
     hft_info!(logger, "curr {} u {}", id, user);
   }
+  let time_cost = timer.elapsed();
+  eprintln!("cost-us={}", time_cost.as_micros());
 
-  println!("wait 2sec");
+  // println!("wait 2sec");
   std::thread::sleep(Duration::from_millis(5000));
   // println!("Done");
 }
