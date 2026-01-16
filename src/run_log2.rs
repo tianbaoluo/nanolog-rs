@@ -1,6 +1,7 @@
 use std::{io, ptr};
 use std::ptr::slice_from_raw_parts;
 use std::sync::Arc;
+use std::time::Duration;
 use crate::log::{rdtsc, Level, LogFn};
 use crate::{tscns, StagingBuffer};
 use crate::console_sink::ConsoleBatchSink;
@@ -35,6 +36,16 @@ impl LoggerHandle {
 }
 
 pub fn init_logger(capacity: usize) -> LoggerHandle {
+  tscns::init(tscns::INIT_CALIBRATE_NANOS, tscns::CALIBRATE_INTERVAL_NANOS);
+
+  std::thread::spawn(move || {
+    loop {
+      tscns::calibrate();
+      // println!("calibrate");
+      std::thread::sleep(Duration::from_nanos(tscns::CALIBRATE_INTERVAL_NANOS as u64));
+    }
+  });
+
   let queue = Arc::new(StagingBuffer::new());
   {
     let queue = queue.clone();

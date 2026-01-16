@@ -3,8 +3,8 @@ use hft_log_demo::hft_info;
 use hft_log_demo::log::rdtsc;
 use hft_log_demo::run_log2::init_logger;
 
-const ROUND: usize = 128;
-const NUM_LOG: usize = 256;
+const ROUND: usize = 256;
+const NUM_LOG: usize = 128;
 
 fn main() {
   let res = core_affinity::set_for_current( core_affinity::CoreId { id: 6 });
@@ -32,8 +32,12 @@ fn main() {
     total_cost_cycles += cost_cycles;
     batch_costs.push(cost_cycles);
     std::hint::spin_loop();
-    std::thread::park_timeout(Duration::from_micros(200));
+    std::thread::park_timeout(Duration::from_micros(10_000));
   }
+
+  //
+  println!("wait 5sec");
+  std::thread::sleep(Duration::from_millis(5_000));
 
   println!("num-droped={}", num_droped);
 
@@ -53,11 +57,7 @@ fn main() {
     "batch cycles: min={} p50={} p90={} p99={} p999={} max={}",
     min, p50, p90, p99, p999, max
   );
-
-  //
-  println!("wait 5sec");
-  std::thread::sleep(Duration::from_millis(5_000));
-  println!("cost-cycles={} avg-cycles = {}", total_cost_cycles, avg_per_log);
+  // println!("cost-cycles={} avg-cycles = {}", total_cost_cycles, avg_per_log);
   println!("Done");
 }
 

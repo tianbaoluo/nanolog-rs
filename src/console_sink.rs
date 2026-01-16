@@ -6,8 +6,6 @@ use crate::my_bytes_mut::MyBytesMut;
 use crate::spsc_var_queue_opt::MsgHeader;
 use crate::tscns;
 
-
-
 /// -------- Console batch sink --------
 pub struct ConsoleBatchSink {
   // 批量 buffer
@@ -24,10 +22,6 @@ pub struct ConsoleBatchSink {
 
   time_cache: TimeCache, // like 01-16 09:33:36 T00
   tid_cache: TidCache, // like T=00
-
-
-  // stdout lock（只在 consumer 线程使用）
-  // out: io::StdoutLock<'static>,
 }
 
 impl ConsoleBatchSink {
@@ -62,7 +56,6 @@ impl ConsoleBatchSink {
 
   #[inline(always)]
   fn flush_now(&mut self) -> io::Result<()> {
-    println!("flush_now");
     if self.batch.is_empty() {
       self.last_flush_cycles = tscns::read_tsc();
       return Ok(());
@@ -82,7 +75,6 @@ impl ConsoleBatchSink {
   /// 处理一条日志（payload 已经是 bytes；你也可以传入结构化参数）
   #[inline(always)]
   pub fn on_record(&mut self, tid: usize, log_meta: &MsgHeader, log_payload: &[u8]) -> io::Result<()> {
-    // println!("on_record");
     let level = log_meta.level as usize;
     let tsc = log_meta.tsc;
     let log_fn = unsafe { transmute::<_, LogFn>(log_meta.log_func) };
@@ -153,29 +145,3 @@ impl ConsoleBatchSink {
 //
 //   write!(out, "x={} y={}", arg1, arg2)
 // }
-
-/// -------- consumer loop 骨架 --------
-/// 你把这里的 `try_pop_record()` 替换成你自己的队列读取即可。
-pub fn console_consumer_loop(mut sink: ConsoleBatchSink) -> io::Result<()> {
-  loop {
-    let now = tscns::read_tsc();
-
-    // 伪代码：从每个 producer 的队列里拉数据
-    // 你可能是：for pid in 0..N { while let Some(rec)=q[pid].front() { ... } }
-    let mut progressed = false;
-
-    // ----- 这里替换成你的 drain 逻辑 -----
-    // if let Some((pid, payload_bytes)) = try_pop_record() {
-    //     sink.on_record(pid, payload_bytes, now)?;
-    //     progressed = true;
-    // }
-    // -----------------------------------
-
-    if !progressed {
-      // 没数据：也要按 500us 强制 flush
-      sink.on_idle(now)?;
-      // 这里不要立刻 park 太久；console 线程可以短暂 spin 再 park
-      std::hint::spin_loop();
-    }
-  }
-}
