@@ -35,7 +35,7 @@ pub fn enabled(_lvl: Level) -> bool {
   true
 }
 
-type LogFn = fn(&mut dyn Write, u32, bytes: &[u8]) -> io::Result<()>;
+pub(crate) type LogFn = fn(&mut dyn Write, u32, bytes: &[u8]) -> io::Result<()>;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -163,7 +163,8 @@ macro_rules! __emit2 {
         write!(out, $fmt, arg1, arg2)
       }
       let args2 = $crate::args2::args2($a0, $a1);
-      $logger.push_write(|log_entry| log_entry.mut_from_args($lvl, __hft_shim, &args2))
+      $logger.publish_args($lvl, __hft_shim, &args2)
+      // $logger.push_write(|log_entry| log_entry.mut_from_args($lvl, __hft_shim, &args2))
       //let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
       //std::hint::black_box(e);
       // $logger.push(e);

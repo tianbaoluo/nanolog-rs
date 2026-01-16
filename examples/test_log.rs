@@ -4,7 +4,7 @@ use std::time::Duration;
 use bytemuck::{Pod, Zeroable};
 use hft_log_demo::args2::UserPod;
 use hft_log_demo::hft_info;
-use hft_log_demo::run_log::init_logger;
+use hft_log_demo::run_log2::init_logger;
 
 // const ROUND: usize = 1_000_000_000;
 const ROUND: usize = 10_000;

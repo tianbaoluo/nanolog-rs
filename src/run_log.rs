@@ -4,11 +4,12 @@ use std::collections::BinaryHeap;
 use std::io;
 use std::io::Write;
 use std::mem::MaybeUninit;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, Sender};
 use crate::log::{rdtsc, LogEntry};
-use crate::spsc_queue;
+use crate::{spsc_queue, StagingBuffer};
 
 struct RegMsg {
   cons: spsc_queue::Consumer<LogEntry>,
@@ -123,6 +124,7 @@ struct QState {
   tid: u32,
 }
 
+
 struct LoggerThread {
   reg_rx: Receiver<RegMsg>,
   qs: Vec<QState>,
@@ -146,25 +148,25 @@ impl LoggerThread {
     }
   }
 
-  fn add_consumer(&mut self, msg: RegMsg) {
-    let mut cons = msg.cons;
-    let mut st = QState {
-      cons,
-      head: None,
-      tid: msg.tid,
-    };
-    self.qs.push(st);
-    // let qid = self.qs.len();
-    // if let Some(e) = st.cons.pop() {
-    //   let t = e.tsc;
-    //   st.head = Some(e);
-    //   self.qs.push(st);
-    //   self.heap.push(Reverse((t, qid)));
-    // } else {
-    //   self.qs.push(st);
-    //   self.empty.push(qid);
-    // }
-  }
+  // fn add_consumer(&mut self, msg: RegMsg) {
+  //   let mut cons = msg.cons;
+  //   let mut st = QState {
+  //     cons,
+  //     head: None,
+  //     tid: msg.tid,
+  //   };
+  //   self.qs.push(st);
+  //   // let qid = self.qs.len();
+  //   // if let Some(e) = st.cons.pop() {
+  //   //   let t = e.tsc;
+  //   //   st.head = Some(e);
+  //   //   self.qs.push(st);
+  //   //   self.heap.push(Reverse((t, qid)));
+  //   // } else {
+  //   //   self.qs.push(st);
+  //   //   self.empty.push(qid);
+  //   // }
+  // }
 
   // #[inline(always)]
   // fn refill_head(&mut self, qid: usize) {
@@ -204,35 +206,35 @@ impl LoggerThread {
   //   }
   // }
 
-  #[inline(always)]
-  fn write_header(&mut self, out: &mut dyn Write, e: &LogEntry) -> io::Result<()> {
-    // tsc -> epoch_ns
-    let epoch_ns = self.clock.tsc_to_epoch_ns(e.tsc);
-    let sec = epoch_ns / 1_000_000_000;
-    let sub = (epoch_ns % 1_000_000_000) as u32;
-    let ms = sub / 1_000_000;
-    let us = (sub / 1_000) % 1000;
-
-    // per-second prefix cache: "MM-DD HH:MM:SS"
-    if self.prefix.sec != sec {
-      self.prefix.refresh(sec);
-    }
-
-    // [MM-DD HH:MM:SS.mmm.uuu level site tid]
-    out.write_all(b"[")?;
-    out.write_all(&self.prefix.buf[..self.prefix.len])?;
-    out.write_all(b".")?;
-    let mut tmp = [0u8; 3];
-    three_digits(&mut tmp, ms);
-    out.write_all(&tmp)?;
-    out.write_all(b".")?;
-    three_digits(&mut tmp, us);
-    out.write_all(&tmp)?;
-    out.write_all(b" ")?;
-    out.write_all(level_str(e.level).as_bytes())?;
-    out.write_all(b" ")?;
-    Ok(())
-  }
+  // #[inline(always)]
+  // fn write_header(&mut self, out: &mut dyn Write, e: &LogEntry) -> io::Result<()> {
+  //   // tsc -> epoch_ns
+  //   let epoch_ns = self.clock.tsc_to_epoch_ns(e.tsc);
+  //   let sec = epoch_ns / 1_000_000_000;
+  //   let sub = (epoch_ns % 1_000_000_000) as u32;
+  //   let ms = sub / 1_000_000;
+  //   let us = (sub / 1_000) % 1000;
+  //
+  //   // per-second prefix cache: "MM-DD HH:MM:SS"
+  //   if self.prefix.sec != sec {
+  //     self.prefix.refresh(sec);
+  //   }
+  //
+  //   // [MM-DD HH:MM:SS.mmm.uuu level site tid]
+  //   out.write_all(b"[")?;
+  //   out.write_all(&self.prefix.buf[..self.prefix.len])?;
+  //   out.write_all(b".")?;
+  //   let mut tmp = [0u8; 3];
+  //   three_digits(&mut tmp, ms);
+  //   out.write_all(&tmp)?;
+  //   out.write_all(b".")?;
+  //   three_digits(&mut tmp, us);
+  //   out.write_all(&tmp)?;
+  //   out.write_all(b" ")?;
+  //   out.write_all(level_str(e.level).as_bytes())?;
+  //   out.write_all(b" ")?;
+  //   Ok(())
+  // }
 
   fn run(mut self) -> io::Result<()> {
     let mut qs = Vec::with_capacity(64);
@@ -311,6 +313,7 @@ pub fn init_logger(capacity: usize) -> LoggerHandle {
     }
   });
 
+  // let queue = Arc::new(StagingBuffer::new());
   let (prod, cons) = spsc_queue::spsc_queue::<LogEntry>(capacity);
   let tid = NEXT_TID.fetch_add(1, Ordering::Relaxed); //get_tid();
   let _ = reg_tx.send(RegMsg { cons, tid });

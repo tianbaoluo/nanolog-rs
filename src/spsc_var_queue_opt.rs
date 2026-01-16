@@ -10,8 +10,9 @@ pub const BLOCK_SIZE: usize = 64;
 pub struct MsgHeader {
   /// total bytes including header; 0 means "rewind marker"
   pub size: u32,
-  pub msg_type: u32,
-  pub userdata: u64,
+  pub level: u32,
+  pub tsc: u64,
+  pub func: u64,
 }
 pub const MSG_HEADER_SIZE: usize = size_of::<MsgHeader>();
 
@@ -51,7 +52,7 @@ impl<const BLK_CNT: usize> SpscVarQueueOpt<BLK_CNT> {
     assert!(MSG_HEADER_SIZE <= BLOCK_SIZE);
 
     let zero_block = Block {
-      header: MsgHeader { size: 0, msg_type: 0, userdata: 0 },
+      header: MsgHeader { size: 0, level: 0, tsc: 0, func: 0 },
       bytes: [0u8; BLOCK_SIZE - MSG_HEADER_SIZE],
     };
 
@@ -78,10 +79,10 @@ impl<const BLK_CNT: usize> SpscVarQueueOpt<BLK_CNT> {
 }
 
 /// Producer handle (single thread)
-pub struct Producer<'a, const BLK_CNT: usize> { q: &'a SpscVarQueueOpt<BLK_CNT> }
+pub struct Producer<'a, const BLK_CNT: usize> { pub q: &'a SpscVarQueueOpt<BLK_CNT> }
 
 /// Consumer handle (single thread)
-pub struct Consumer<'a, const BLK_CNT: usize> { q: &'a SpscVarQueueOpt<BLK_CNT> }
+pub struct Consumer<'a, const BLK_CNT: usize> { pub q: &'a SpscVarQueueOpt<BLK_CNT> }
 
 impl<'a, const BLK_CNT: usize> Producer<'a, BLK_CNT> {
   /// Allocate payload_len bytes (excluding header).

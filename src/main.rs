@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::time::Duration;
-use hft_log_demo::hft_info;
+use hft_log_demo::{hft_info, StagingBuffer};
 use hft_log_demo::log::rdtsc;
-use hft_log_demo::run_log::init_logger;
+use hft_log_demo::run_log2::init_logger;
 
 const ROUND: usize = 16384;
 const NUM_LOG: usize = 1024;

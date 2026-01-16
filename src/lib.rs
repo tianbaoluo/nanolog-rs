@@ -1,9 +1,12 @@
+use crate::spsc_var_queue_opt::SpscVarQueueOpt;
+
 pub mod args;
 pub mod args2;
 pub mod log;
 pub mod run_log;
 pub(crate) mod spsc;
-mod spsc_var_queue_opt;
+pub(crate) mod spsc_var_queue_opt;
+pub mod run_log2;
 
 pub mod spsc_queue {
   pub(crate) type Producer<T> = crate::spsc::Producer<T>;
@@ -13,3 +16,5 @@ pub mod spsc_queue {
     crate::spsc::ring_buffer(capacity)
   }
 }
+
+pub type StagingBuffer = SpscVarQueueOpt<1024>;
