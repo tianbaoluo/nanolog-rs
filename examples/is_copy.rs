@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use hft_log_demo::args2::args2;
 
 trait NotCopy {
   const IS_COPY: bool = false;
@@ -33,6 +34,9 @@ trait PodTag {
 impl <T> PodTag for T {}
 
 fn main() {
+  let args = args2(123u32, 345u64);
+  let len = size_of_val(&args);
+  println!("size-of(u32,u64)={} #u64={}", len, len >> 3);
   let a = IsCopy::<u32>::IS_COPY;
   let b = IsCopy::<Vec<u32>>::IS_COPY;
   println!("a = {} b = {}", a, b);

@@ -1,21 +1,12 @@
 use std::{io, ptr};
 use std::sync::Arc;
-use crate::log::{Level, LogFn};
+use crate::log::{rdtsc, Level, LogFn};
 use crate::StagingBuffer;
 use crate::spsc_var_queue_opt::{Consumer, Producer};
 
 pub struct LoggerHandle {
   pub queue: Arc<StagingBuffer>,
 }
-
-// #[repr(C)]
-// #[derive(Copy, Clone)]
-// pub struct LogEntryHeader {
-//   pub tsc: u64,
-//   pub level: u64,
-//   pub func: LogFn,
-// }
-// const LOG_ENTRY_HEADER_LEN: usize = size_of::<LogEntryHeader>();
 
 impl LoggerHandle {
   pub fn publish_args<A: Copy>(&self, level: Level, func: LogFn, args: &A) -> bool {
@@ -28,11 +19,11 @@ impl LoggerHandle {
       unsafe {
         let hdr = &mut (*hdr);
         hdr.level = level as u8 as u32;
-        hdr.tsc = 0;
+        hdr.tsc = rdtsc();
         hdr.func = func as u64;
 
         ptr::copy_nonoverlapping(args as *const A as *const u8, payload, len);
-        prod.commit(hdr, total)
+        prod.commit(hdr, total);
       }
       true
     } else {
