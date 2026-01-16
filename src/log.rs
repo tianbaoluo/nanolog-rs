@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::{io, mem, ptr};
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::my_bytes_mut::MyBytesMut;
 
 const MAX_PAYLOAD_LEN: usize = 256;
 
@@ -35,7 +36,7 @@ pub fn enabled(_lvl: Level) -> bool {
   true
 }
 
-pub(crate) type LogFn = fn(&mut dyn Write, u32, bytes: &[u8]) -> io::Result<()>;
+pub(crate) type LogFn = fn(&mut MyBytesMut, bytes: &[u8]) -> io::Result<()>;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -147,19 +148,32 @@ impl SourceLocation {
       file
     }
   }
+
+  #[inline(always)]
+  pub fn write_to(&self, out: &mut MyBytesMut) {
+    out.extend_from_slice(self.module_path.as_bytes());
+    out.extend_from_slice(b"::");
+    out.extend_from_slice(self.file_name().as_bytes());
+    out.push(b'#');
+    out.extend_from_slice(self.line.to_string().as_bytes());
+    out.extend_from_slice(b"] ");
+  }
 }
 
 #[macro_export]
 macro_rules! __emit2 {
     ($logger:expr, $lvl:expr, $fmt:literal, $a0:expr, $a1:expr) => {{
       #[inline(never)]
-      fn __hft_shim(out: &mut dyn std::io::Write, tid: u32, bytes: &[u8]) -> std::io::Result<()> {
+      fn __hft_shim(out: &mut $crate::my_bytes_mut::MyBytesMut, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
         let src_loc = $crate::log::SourceLocation::__new(module_path!(), file!(), line!());
-        $crate::log::write_loc_tid(out, src_loc, tid)?;
+        src_loc.write_to(out);
+        // out.extend_from_slice(b"] ");
         let tag1 = bytes[0];
         let tag2 = bytes[1];
         let (arg1, offset) = $crate::args2::decode(tag1, bytes, 8);
         let (arg2, _) = $crate::args2::decode(tag2, bytes, offset);
+
         write!(out, $fmt, arg1, arg2)
       }
       let args2 = $crate::args2::args2($a0, $a1);
@@ -171,12 +185,12 @@ macro_rules! __emit2 {
     }};
 }
 
-#[inline(always)]
-pub fn write_loc_tid(out: &mut dyn std::io::Write, src_loc: SourceLocation, tid: u32) -> io::Result<()> {
-  out.write_all(src_loc.module_path.as_bytes())?;
-  out.write_all(b"::")?;
-  out.write_all(src_loc.file_name().as_bytes())?;
-  write!(out, "#{} {}", src_loc.line, tid)?;
-  out.write_all(b"] ")?;
-  Ok(())
-}
+// #[inline(always)]
+// pub fn write_loc_tid(out: &mut dyn std::io::Write, src_loc: SourceLocation, tid: u32) -> io::Result<()> {
+//   out.write_all(src_loc.module_path.as_bytes())?;
+//   out.write_all(b"::")?;
+//   out.write_all(src_loc.file_name().as_bytes())?;
+//   write!(out, "#{} {}", src_loc.line, tid)?;
+//   out.write_all(b"] ")?;
+//   Ok(())
+// }

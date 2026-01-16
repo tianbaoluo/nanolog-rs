@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 /// [`NS_PER_SEC`]  The number of nanoseconds in each second is equal to one billion nanoseconds.
-const NS_PER_SEC: i64 = 1_000_000_000;
+pub const NS_PER_SEC: i64 = 1_000_000_000;
 
 /// [`INIT_CALIBRATE_NANOS`] The default initial calibration sampling duration is 300 milliseconds.
 pub const INIT_CALIBRATE_NANOS: i64 = 300000000;

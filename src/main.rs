@@ -1,16 +1,15 @@
-use std::sync::Arc;
 use std::time::Duration;
-use hft_log_demo::{hft_info, StagingBuffer};
+use hft_log_demo::hft_info;
 use hft_log_demo::log::rdtsc;
 use hft_log_demo::run_log2::init_logger;
 
-const ROUND: usize = 16384;
-const NUM_LOG: usize = 1024;
+const ROUND: usize = 128;
+const NUM_LOG: usize = 256;
 
 fn main() {
   let res = core_affinity::set_for_current( core_affinity::CoreId { id: 6 });
 
-  let mut logger = init_logger(1024 * 128);
+  let logger = init_logger(1024 * 128);
 
   // std::thread::sleep(Duration::from_millis(500));
   let num_log = NUM_LOG as u32;
@@ -25,6 +24,7 @@ fn main() {
       let id = std::hint::black_box(id);
       let ok = hft_info!(logger, "curr {} u {}", id, id);
       num_droped += !ok as usize;
+      // std::thread::sleep(Duration::from_millis(5000_000));
     }
     let end_cycles = tsc_end();
     let cost_cycles = end_cycles - start_cycles;
@@ -56,7 +56,7 @@ fn main() {
 
   //
   println!("wait 5sec");
-  std::thread::sleep(Duration::from_millis(200));
+  std::thread::sleep(Duration::from_millis(5_000));
   println!("cost-cycles={} avg-cycles = {}", total_cost_cycles, avg_per_log);
   println!("Done");
 }

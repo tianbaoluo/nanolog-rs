@@ -1,55 +1,12 @@
 use std::io::{self, Write};
+use std::mem::transmute;
+use crate::format::{lut_msus, TidCache, TimeCache, LEVEL_STRS};
+use crate::log::LogFn;
+use crate::my_bytes_mut::MyBytesMut;
+use crate::spsc_var_queue_opt::MsgHeader;
 use crate::tscns;
 
-/// -------- Prefix cache --------
-/// 按 pid / tid 缓存固定前缀（比如 "[pid=2] " / "[T3] " / 你的颜色码等）
-struct TidCache {
-  prefix: Vec<Vec<u8>>,
-}
 
-impl TidCache {
-  fn new(capacity: usize) -> Self {
-    let mut prefix = Vec::with_capacity(capacity);
-    for tid in 0..capacity {
-      // 这里随便举例：你可以换成更复杂的前缀
-      let mut p = Vec::with_capacity(4);
-      write!(&mut p, "[T{}]", tid).unwrap();
-      // p.extend_from_slice(b"[tid=");
-      // push_u32(&mut p, tid as u32);
-      // p.extend_from_slice(b"] ");
-      prefix.push(p);
-    }
-    Self { prefix }
-  }
-
-  #[inline(always)]
-  fn get(&self, tid: usize) -> &[u8] {
-    // pid 由你保证合法
-    &self.prefix[tid]
-  }
-}
-
-/// 无分配整数拼接（极简版；你也可以换 itoa crate）
-#[inline(always)]
-fn push_u32(dst: &mut Vec<u8>, mut x: u32) {
-  // 写到栈上再 reverse
-  let mut buf = [0u8; 10];
-  let mut i = 0;
-  if x == 0 {
-    dst.push(b'0');
-    return;
-  }
-  while x > 0 {
-    let d = (x % 10) as u8;
-    buf[i] = b'0' + d;
-    i += 1;
-    x /= 10;
-  }
-  while i > 0 {
-    i -= 1;
-    dst.push(buf[i]);
-  }
-}
 
 /// -------- Console batch sink --------
 pub struct ConsoleBatchSink {
@@ -58,40 +15,43 @@ pub struct ConsoleBatchSink {
   // 每条 log 拼接的 scratch（可选，用于减少 batch 里反复 extend）
   // 你也可以直接 batch.extend(prefix); batch.extend(payload)...
   // 这里保留一个 scratch 是为了你后续加 timestamp/level 时更顺手。
-  scratch: Vec<u8>,
+  scratch: MyBytesMut,
 
   // flush 策略
   flush_bytes: usize,
   flush_interval_cycles: i64,
   last_flush_cycles: i64,
 
-  // prefix cache
-  prefix: TidCache,
+  time_cache: TimeCache, // like 01-16 09:33:36 T00
+  tid_cache: TidCache, // like T=00
+
 
   // stdout lock（只在 consumer 线程使用）
-  out: io::StdoutLock<'static>,
+  // out: io::StdoutLock<'static>,
 }
 
 impl ConsoleBatchSink {
   pub fn new() -> Self {
     // 注意：StdoutLock 生命周期问题：最简单的做法是在 consumer 线程里构造 sink，
     // 并用 Box::leak 把 stdout 变成 'static（仅骨架用；生产里你可以把 lock 放到 run() 里）。
-    let stdout = Box::leak(Box::new(io::stdout()));
-    let out = stdout.lock();
+    // let stdout = Box::leak(Box::new(io::stdout()));
+    // let out = stdout.lock();
 
-    let flush_interval_cycles = (500_000.0 / tscns::get_ns_per_tsc()) as i64;
+    // let flush_interval_cycles = (500_000.0 / tscns::get_ns_per_tsc()) as i64;
     // let flush_interval_cycles = us_to_cycles(500, tsc_hz);
 
     Self {
       batch: Vec::with_capacity(256 * 1024),
-      scratch: Vec::with_capacity(512),
+      scratch: MyBytesMut::with_capacity(512),
 
       flush_bytes: 256 * 1024,
-      flush_interval_cycles,
+      flush_interval_cycles: 1_500_000,
       last_flush_cycles: tscns::read_tsc(),
 
-      prefix: TidCache::new(32),
-      out,
+      // prefix: TidCache::new(32),
+      // out,
+      time_cache: TimeCache::new(),
+      tid_cache: TidCache::new(32),
     }
   }
 
@@ -102,14 +62,18 @@ impl ConsoleBatchSink {
 
   #[inline(always)]
   fn flush_now(&mut self) -> io::Result<()> {
+    println!("flush_now");
     if self.batch.is_empty() {
       self.last_flush_cycles = tscns::read_tsc();
       return Ok(());
     }
-    self.out.write_all(&self.batch)?;
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    out.write_all(&self.batch)?;
     // 如果你希望“500us 到就一定可见”，可以加 flush；
     // 但 flush 可能更贵。通常只在时间触发时 flush。
-    self.out.flush()?;
+    out.flush()?;
     self.batch.clear();
     self.last_flush_cycles = tscns::read_tsc();
     Ok(())
@@ -117,20 +81,46 @@ impl ConsoleBatchSink {
 
   /// 处理一条日志（payload 已经是 bytes；你也可以传入结构化参数）
   #[inline(always)]
-  pub fn on_record(&mut self, tid: usize, payload: &[u8], now_cycles: i64) -> io::Result<()> {
-    // 1) 拼接：prefix + payload + '\n'
-    let pref = self.prefix.get(tid);
+  pub fn on_record(&mut self, tid: usize, log_meta: &MsgHeader, log_payload: &[u8]) -> io::Result<()> {
+    // println!("on_record");
+    let level = log_meta.level as usize;
+    let tsc = log_meta.tsc;
+    let log_fn = unsafe { transmute::<_, LogFn>(log_meta.log_func) };
 
-    // 这里用 scratch 只是为了以后扩展更方便
+    let curr_ns = tscns::tsc2ns(tsc);
+
+    let curr_sec = curr_ns / 1_000_000_000;
+    let sub_ns = curr_ns % 1_000_000_000;
+
+    let sub_us = sub_ns / 1_000;        // 0..999_999
+    let curr_ms = (sub_us / 1_000) as usize;   // 0..999
+    let curr_us = (sub_us % 1_000) as usize;   // 0..999
+
     self.scratch.clear();
-    self.scratch.extend_from_slice(pref);
-    self.scratch.extend_from_slice(payload);
+    self.scratch.push(b'[');
+    self.time_cache.refresh_dt(curr_sec, self.scratch.unfilled());
+    self.scratch.advance(TimeCache::TIME_LEN);
+    lut_msus(self.scratch.unfilled(), curr_ms, curr_us);
+    self.scratch.advance(8);
+    self.scratch.push(b' ');
+
+    self.tid_cache.write(tid, self.scratch.unfilled());
+    self.scratch.advance(TidCache::TID_LEN);
+    self.scratch.push(b' ');
+
+    unsafe {
+      self.scratch.extend_from_slice(LEVEL_STRS.get_unchecked(level).as_bytes());
+    }
+
+    (log_fn)(&mut self.scratch, log_payload)?;
+
+    // self.scratch.extend_from_slice(payload);
     self.scratch.push(b'\n');
 
-    self.batch.extend_from_slice(&self.scratch);
+    self.batch.extend_from_slice(self.scratch.result());
 
     // 2) flush 条件
-    if self.should_flush(now_cycles) {
+    if self.should_flush(tsc) {
       self.flush_now()?;
     }
     Ok(())
@@ -147,6 +137,22 @@ impl ConsoleBatchSink {
     Ok(())
   }
 }
+
+// for test
+// fn __hft_shim(out: &mut MyBytesMut, bytes: &[u8]) -> std::io::Result<()> {
+//   let src_loc = crate::log::SourceLocation::__new(module_path!(), file!(), line!());
+//   out.extend_from_slice(src_loc.module_path.as_bytes());
+//   out.extend_from_slice(b"::");
+//   out.extend_from_slice(src_loc.file_name().as_bytes());
+//   out.extend_from_slice(src_loc.line.to_string().as_bytes());
+//   out.extend_from_slice(b"] ");
+//   let tag1 = bytes[0];
+//   let tag2 = bytes[1];
+//   let (arg1, offset) = crate::args2::decode(tag1, bytes, 8);
+//   let (arg2, _) = crate::args2::decode(tag2, bytes, offset);
+//
+//   write!(out, "x={} y={}", arg1, arg2)
+// }
 
 /// -------- consumer loop 骨架 --------
 /// 你把这里的 `try_pop_record()` 替换成你自己的队列读取即可。

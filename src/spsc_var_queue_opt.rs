@@ -12,7 +12,7 @@ pub struct MsgHeader {
   pub size: u32,
   pub level: u32,
   pub tsc: i64,
-  pub func: u64,
+  pub log_func: u64,
 }
 pub const MSG_HEADER_SIZE: usize = size_of::<MsgHeader>();
 
@@ -52,7 +52,7 @@ impl<const BLK_CNT: usize> SpscVarQueueOpt<BLK_CNT> {
     assert!(MSG_HEADER_SIZE <= BLOCK_SIZE);
 
     let zero_block = Block {
-      header: MsgHeader { size: 0, level: 0, tsc: 0, func: 0 },
+      header: MsgHeader { size: 0, level: 0, tsc: 0, log_func: 0 },
       bytes: [0u8; BLOCK_SIZE - MSG_HEADER_SIZE],
     };
 

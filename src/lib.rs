@@ -9,6 +9,8 @@ pub(crate) mod spsc_var_queue_opt;
 pub mod run_log2;
 pub mod tscns;
 pub(crate) mod console_sink;
+pub mod format;
+pub mod my_bytes_mut;
 
 pub mod spsc_queue {
   pub(crate) type Producer<T> = crate::spsc::Producer<T>;
