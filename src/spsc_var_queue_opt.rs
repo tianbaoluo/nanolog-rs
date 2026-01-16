@@ -11,7 +11,7 @@ pub struct MsgHeader {
   /// total bytes including header; 0 means "rewind marker"
   pub size: u32,
   pub level: u32,
-  pub tsc: u64,
+  pub tsc: i64,
   pub func: u64,
 }
 pub const MSG_HEADER_SIZE: usize = size_of::<MsgHeader>();

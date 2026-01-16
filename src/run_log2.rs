@@ -1,7 +1,7 @@
 use std::{io, ptr};
 use std::sync::Arc;
 use crate::log::{rdtsc, Level, LogFn};
-use crate::StagingBuffer;
+use crate::{tscns, StagingBuffer};
 use crate::spsc_var_queue_opt::{Consumer, Producer};
 
 pub struct LoggerHandle {
@@ -19,7 +19,7 @@ impl LoggerHandle {
       unsafe {
         let hdr = &mut (*hdr);
         hdr.level = level as u8 as u32;
-        hdr.tsc = rdtsc();
+        hdr.tsc = tscns::read_tsc();
         hdr.func = func as u64;
 
         ptr::copy_nonoverlapping(args as *const A as *const u8, payload, len);
