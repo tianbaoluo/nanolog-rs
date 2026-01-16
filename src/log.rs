@@ -6,13 +6,13 @@ const MAX_PAYLOAD_LEN: usize = 256;
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-pub(crate) fn rdtsc() -> u64 {
+pub fn rdtsc() -> u64 {
   unsafe { core::arch::x86_64::_rdtsc() as u64 }
 }
 
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-pub(crate) fn rdtsc() -> u64 {
+pub fn rdtsc() -> u64 {
   // fallback，仅用于非 x86_64
   SystemTime::now()
     .duration_since(UNIX_EPOCH)
@@ -100,7 +100,8 @@ macro_rules! hft_info {
         if enabled(Level::Info) { __emit1!($logger, Level::Info, $fmt, $a0); }
     }};
     ($logger:expr, $fmt:literal, $a0:expr, $a1:expr $(,)?) => {{
-        if $crate::log::enabled($crate::log::Level::Info) { $crate::__emit2!($logger, $crate::log::Level::Info, $fmt, $a0, $a1); }
+        //if $crate::log::enabled($crate::log::Level::Info) { $crate::__emit2!($logger, $crate::log::Level::Info, $fmt, $a0, $a1); }
+        $crate::__emit2!($logger, $crate::log::Level::Info, $fmt, $a0, $a1)
     }};
     ($logger:expr, $fmt:literal, $a0:expr, $a1:expr, $a2:expr $(,)?) => {{
         if enabled(Level::Info) { __emit3!($logger, Level::Info, $fmt, $a0, $a1, $a2); }
@@ -162,8 +163,9 @@ macro_rules! __emit2 {
         write!(out, $fmt, arg1, arg2)
       }
       let args2 = $crate::args2::args2($a0, $a1);
-      $logger.push_write(|log_entry| log_entry.mut_from_args($lvl, __hft_shim, &args2));
-      // let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
+      $logger.push_write(|log_entry| log_entry.mut_from_args($lvl, __hft_shim, &args2))
+      //let e = $crate::log::LogEntry::from_args($lvl, __hft_shim, &args2);
+      //std::hint::black_box(e);
       // $logger.push(e);
     }};
 }

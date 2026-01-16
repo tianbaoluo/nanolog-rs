@@ -83,18 +83,22 @@ impl TlsProd {
 // }
 
 impl LoggerHandle {
-  // #[inline(always)]
-  // pub fn push(&mut self, e: LogEntry) {
-  //   let _ = self.prod.push(e); // 满了就丢；你可以加 dropped 计数
-  //   // TLS_PROD.with(|tls| {
-  //   //   let p = tls.get_mut(self);
-  //   //   let _ = p.push(e); // 满了就丢；你可以加 dropped 计数
-  //   // });
-  // }
+  #[inline(always)]
+  pub fn push(&mut self, e: LogEntry) {
+    let mut log_entry = e;
+    while let Err(e) = self.prod.push(log_entry) {
+      log_entry = e;
+    }
+    // let _ = self.prod.push(e); // 满了就丢；你可以加 dropped 计数
+    // TLS_PROD.with(|tls| {
+    //   let p = tls.get_mut(self);
+    //   let _ = p.push(e); // 满了就丢；你可以加 dropped 计数
+    // });
+  }
 
   #[inline(always)]
-  pub fn push_write<F: FnMut(&mut LogEntry)>(&mut self, f: F) {
-    let _ = self.prod.push_write(f); // 满了就丢；你可以加 dropped 计数
+  pub fn push_write<F: FnOnce(&mut LogEntry)>(&mut self, f: F) -> bool {
+    self.prod.push_write(f).is_ok() // 满了就丢；你可以加 dropped 计数
   }
 }
 
@@ -162,43 +166,43 @@ impl LoggerThread {
     // }
   }
 
-  #[inline(always)]
-  fn refill_head(&mut self, qid: usize) {
-    if self.qs[qid].head.is_none() {
-      if let Some(e) = self.qs[qid].cons.pop() {
-        let t = e.tsc;
-        self.qs[qid].head = Some(e);
-        self.heap.push(Reverse((t, qid)));
-      } else {
-        self.empty.push(qid);
-      }
-    }
-  }
-
-  #[inline(always)]
-  fn scan_empty_budget(&mut self, budget: usize) {
-    let mut b = 0;
-    while b < budget && !self.empty.is_empty() {
-      let len = self.empty.len();
-      let idx = self.empty_cursor % len;
-      let qid = self.empty[idx];
-
-      if self.qs[qid].head.is_none() {
-        if let Some(e) = self.qs[qid].cons.pop() {
-          let t = e.tsc;
-          self.qs[qid].head = Some(e);
-          self.heap.push(Reverse((t, qid)));
-          self.empty.swap_remove(idx);
-        } else {
-          self.empty_cursor = self.empty_cursor.wrapping_add(1);
-        }
-      } else {
-        self.empty.swap_remove(idx);
-      }
-
-      b += 1;
-    }
-  }
+  // #[inline(always)]
+  // fn refill_head(&mut self, qid: usize) {
+  //   if self.qs[qid].head.is_none() {
+  //     if let Some(e) = self.qs[qid].cons.pop() {
+  //       let t = e.tsc;
+  //       self.qs[qid].head = Some(e);
+  //       self.heap.push(Reverse((t, qid)));
+  //     } else {
+  //       self.empty.push(qid);
+  //     }
+  //   }
+  // }
+  //
+  // #[inline(always)]
+  // fn scan_empty_budget(&mut self, budget: usize) {
+  //   let mut b = 0;
+  //   while b < budget && !self.empty.is_empty() {
+  //     let len = self.empty.len();
+  //     let idx = self.empty_cursor % len;
+  //     let qid = self.empty[idx];
+  //
+  //     if self.qs[qid].head.is_none() {
+  //       if let Some(e) = self.qs[qid].cons.pop() {
+  //         let t = e.tsc;
+  //         self.qs[qid].head = Some(e);
+  //         self.heap.push(Reverse((t, qid)));
+  //         self.empty.swap_remove(idx);
+  //       } else {
+  //         self.empty_cursor = self.empty_cursor.wrapping_add(1);
+  //       }
+  //     } else {
+  //       self.empty.swap_remove(idx);
+  //     }
+  //
+  //     b += 1;
+  //   }
+  // }
 
   #[inline(always)]
   fn write_header(&mut self, out: &mut dyn Write, e: &LogEntry) -> io::Result<()> {
@@ -244,17 +248,17 @@ impl LoggerThread {
         qs.push(st);
       }
 
-      let mut out = io::stdout();
+      // let mut out = io::stdout();
       for qs in qs.iter_mut() {
         let tid = qs.tid;
         while let Some(log_entry) = qs.cons.pop() {
-          self.write_header(&mut out, &log_entry)?;
+          // self.write_header(&mut out, &log_entry)?;
           // // let len = e.len as usize;
-          (log_entry.func)(&mut out, tid, &log_entry.data)?;
-          out.write_all(b"\n")?;
+          // (log_entry.func)(&mut out, tid, &log_entry.data)?;
+          // out.write_all(b"\n")?;
         }
       }
-      out.flush()?;
+      // out.flush()?;
       // drop(out);
       // drop(stdout);
 
@@ -300,6 +304,7 @@ pub fn init_logger(capacity: usize) -> LoggerHandle {
   let (reg_tx, reg_rx) = crossbeam_channel::unbounded();
 
   std::thread::spawn(move || {
+    let res = core_affinity::set_for_current( core_affinity::CoreId { id: 7 });
     let lt = LoggerThread::new(reg_rx);
     if let Err(e) = lt.run() {
       println!("Run log-backend error: {:?}", e);

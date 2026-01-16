@@ -7,26 +7,28 @@ use hft_log_demo::hft_info;
 use hft_log_demo::run_log::init_logger;
 
 // const ROUND: usize = 1_000_000_000;
-const ROUND: usize = 1_000;
+const ROUND: usize = 10_000;
 
 fn main() {
   let mut logger = init_logger(1024 * 16);
 
   let round = ROUND as u32;
-  let timer = minstant::Instant::now();
+  // let timer = minstant::Instant::now();
+  let timer = std::time::Instant::now();
   for id in 0..round {
     // let user = UserData {
     //   x: id,
     //   a: id,
     //   y: id as u64,
     // };
-    hft_info!(logger, "curr {} u {}", id, id);
+    let ok = hft_info!(logger, "curr {} u {}", id, id);
   }
   let time_cost_ns = timer.elapsed().as_nanos();
   println!("cost-ns={} avg = {}", time_cost_ns, time_cost_ns as f64 / round as f64);
   //
   println!("wait 5sec");
   std::thread::sleep(Duration::from_millis(5000));
+  println!("cost-ns={} avg = {}", time_cost_ns, time_cost_ns as f64 / round as f64);
   println!("Done");
 }
 

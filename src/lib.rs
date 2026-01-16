@@ -3,6 +3,7 @@ pub mod args2;
 pub mod log;
 pub mod run_log;
 pub(crate) mod spsc;
+mod spsc_var_queue_opt;
 
 pub mod spsc_queue {
   pub(crate) type Producer<T> = crate::spsc::Producer<T>;

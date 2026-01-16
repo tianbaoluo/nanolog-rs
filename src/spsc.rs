@@ -150,8 +150,8 @@ impl<T> Producer<T> {
   ///
   /// Returns `Err(Full(value))` if the queue is full, returning ownership
   /// of the value to the caller.
-  #[inline]
-  pub fn push_write<F: FnMut(&mut T)>(&mut self, mut f: F) -> Result<(), ()> {
+  // #[inline]
+  pub fn push_write<F: FnOnce(&mut T)>(&mut self, f: F) -> Result<(), ()> {
     let tail = self.local_tail;
 
     if tail.wrapping_sub(self.cached_head) > self.mask {
@@ -168,6 +168,29 @@ impl<T> Producer<T> {
       let data_ptr = self.buffer.add(tail & self.mask);
       f(&mut *data_ptr);
     }
+    let new_tail = tail.wrapping_add(1);
+    std::sync::atomic::fence(Ordering::Release);
+
+    self.shared.tail.store(new_tail, Ordering::Relaxed);
+    self.local_tail = new_tail;
+
+    Ok(())
+  }
+
+  #[inline]
+  pub fn push(&mut self, value: T) -> Result<(), T> {
+    let tail = self.local_tail;
+
+    if tail.wrapping_sub(self.cached_head) > self.mask {
+      self.cached_head = self.shared.head.load(Ordering::Relaxed);
+
+      std::sync::atomic::fence(Ordering::Acquire);
+      if tail.wrapping_sub(self.cached_head) > self.mask {
+        return Err(value);
+      }
+    }
+
+    unsafe { self.buffer.add(tail & self.mask).write(value) };
     let new_tail = tail.wrapping_add(1);
     std::sync::atomic::fence(Ordering::Release);
 
@@ -217,7 +240,7 @@ impl<T> Consumer<T> {
   ///
   /// Returns `None` if the queue is empty.
   #[inline]
-  pub fn pop(&mut self) -> Option<T> {
+  pub fn pop(&mut self) -> Option<u64> {
     let head = self.local_head;
 
     if head == self.cached_tail {
@@ -229,14 +252,14 @@ impl<T> Consumer<T> {
       }
     }
 
-    let value = unsafe { self.buffer.add(head & self.mask).read() };
+    // let value = unsafe { self.buffer.add(head & self.mask).read() };
     let new_head = head.wrapping_add(1);
     std::sync::atomic::fence(Ordering::Release);
 
     self.shared.head.store(new_head, Ordering::Relaxed);
     self.local_head = new_head;
 
-    Some(value)
+    Some(0)
   }
 
   /// Returns the capacity of the queue.
